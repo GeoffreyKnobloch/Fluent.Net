@@ -1,11 +1,14 @@
-﻿using FluentAssertions;
+﻿using Fluent.Net.Ast;
+using FluentAssertions;
 using Microsoft.VisualStudio.TestPlatform.CommunicationUtilities;
 using NUnit.Framework;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Web;
 
 namespace Fluent.Net.Test
 {
@@ -21,8 +24,8 @@ namespace Fluent.Net.Test
                 actual.Should().BeEquivalentTo(expected,
                     options => options.RespectingRuntimeTypes());
 
-                var javaScriptSerializer = new JavaScriptSerializer();
-                return javaScriptSerializer.ToJsFunction(actual);
+                
+                return JavaScriptSerializer.ToJsFunction(actual);
             }
         }
 
@@ -79,21 +82,54 @@ namespace Fluent.Net.Test
                 var ps = new Parser(withSpans);
                 var entry = ps.ParseEntry(sr);
 
-                return new JavaScriptSerializer().ToJsFunction(entry);
+                return JavaScriptSerializer.ToJsFunction(entry);
             }
         }
+
+        [Test]
+        public void TestCanLoadFtlAndGetJs()
+        {
+            var jsSerializer = new JavaScriptSerializer();
+            var errors = jsSerializer.LoadContext("en");
+            Assert.That(errors, Is.Null.Or.Empty);
+            jsSerializer.GenerateJs();
+            var js = jsSerializer.GetResult();
+            Console.WriteLine("Final js output:");
+            Console.WriteLine(js);
+
+        }
+
+        /*
+         * Valid JS:
+         * let sync_brand_name = 'Firefox Account';
+    function trad_tabs_close_button() { return 'Close'; }
+    function trad_tabs_close_tooltip() { return 'tabs-close-tooltip'; }
+    function trad_tabs_close_warning() { return 'tabs-close-warning'; }
+    function trad_sync_dialog_title() { return 'sync-dialog-title'; }
+    function trad_sync_headline_title() { return 'sync-headline-title'; }
+    function trad_sync_signedout_title() { return 'sync-signedout-title'; }
+
+    let tr = {'tabs-close-button' : trad_tabs_close_button,
+    'tabs-close-tooltip' : trad_tabs_close_tooltip,
+    'tabs-close-warning' : trad_tabs_close_warning,
+    'sync-dialog-title' : trad_sync_dialog_title,
+    'sync-headline-title' : trad_sync_headline_title,
+    'sync-signedout-title' : trad_sync_signedout_title
+    };
+         * 
+         * */
+
     }
 
     public class JavaScriptSerializer
     {
-        public List<MessageContext> MessageContexts {get; private set;}
+        public List<MessageContext> MessageContexts {get; } = new List<MessageContext>();
         private Dictionary<string, string> TermsJs {get; } = new Dictionary<string, string>();
         private Dictionary<string, RuntimeAst.Message> TermsMessage{get; } = new Dictionary<string, RuntimeAst.Message>();
         private Dictionary<string, string> MessagesJs {get; } = new Dictionary<string, string>();
         private Dictionary<string, RuntimeAst.Message> MessagesMessage {get; } = new Dictionary<string, RuntimeAst.Message>();
         private List<string> Keys {get; } = new List<string>();
         public bool WithSpans { get; }
-        public bool IsDirty {get; private set; } = true;
 
         public JavaScriptSerializer(bool withSpans = false)
         {
@@ -102,9 +138,10 @@ namespace Fluent.Net.Test
 
         public MessageContext LoadContext(string lang) // Load le .ftl, sauvegarde les messages 
         {
-             string ftlPath = Path.Combine("..", "..", "..", $"{lang}.ftl");
+            string ftlPath = Path.Combine("..", "..", "..", $"{lang}.ftl");
             using (var sr = new StreamReader(ftlPath))
             {
+                /*
                 var options = new MessageContextOptions { UseIsolating = false };
                 var mc = new MessageContext(lang, options);
                 var errors = mc.AddMessages(sr);
@@ -112,12 +149,12 @@ namespace Fluent.Net.Test
                 {
                     Console.WriteLine(error);
                 }
-
+                */
                 var fluentRessource = FluentResource.FromReader(sr);
                 foreach (var entry in fluentRessource.Entries)
                 {
                     if (!this.Keys.Contains(entry.Key)) this.Keys.Add(entry.Key);
-                    
+
                     if (entry.Key.StartsWith("-"))
                     {
                         if (!this.TermsMessage.ContainsKey(entry.Key))
@@ -134,9 +171,8 @@ namespace Fluent.Net.Test
                     }
                 }
 
-                // TODO: Alimenter la Liste des keys en parsant directement le stream reader.
-                this.MessageContexts.Add(mc);
-                return mc;
+                // this.MessageContexts.Add(mc);
+                return null;
             }
         }
 
@@ -146,8 +182,17 @@ namespace Fluent.Net.Test
             // On prend les Dico de TermsMessage et MessagesMessage, et on en fait du js.
             foreach (var term in TermsMessage)
             {
-                // Parcour le Term, et alimente 
-                this.TermsJs.Add(term.Key, $"let {term.Key} = '{term.Value.Value}'"); // Impl naive, faut regarder term.Value à quoi ça ressemble pour un term.
+                var variableName = term.Key.Substring(1).Replace('-', '_');
+                // Parcour le Term, et alimente
+                if (term.Value.Value is RuntimeAst.StringLiteral stringLiteral)
+                {
+                    this.TermsJs.Add(term.Key, $"let {variableName} = '{stringLiteral.Value}';");
+                }
+                else
+                {
+                    Debugger.Break(); // Fallback, mais pas prévu d'arriver là!
+                    this.TermsJs.Add(term.Key, $"let {variableName} = '{variableName}';");
+                }
             }
 
             foreach (var message in this.MessagesMessage)
@@ -173,7 +218,6 @@ namespace Fluent.Net.Test
 
         public string GetResult()
         {
-            if (this.IsDirty) return string.Empty; // ?
             // Prendre les ref pour déclarer les variables
             StringBuilder sb = new StringBuilder();
             DeclareTerms(sb);
@@ -187,11 +231,21 @@ namespace Fluent.Net.Test
         private StringBuilder DeclareTerms(StringBuilder sb)
         {
             // On prend les références, et on déclare les variables
+            foreach (var termJs in this.TermsJs)
+            {
+                sb.Append(termJs.Value);
+                sb.Append("\n");
+            }
             return sb;
         }
 
         private StringBuilder DeclareFunctions(StringBuilder sb)
         {
+            foreach (var messageJs in this.MessagesJs)
+            {
+                sb.Append(messageJs.Value);
+                sb.Append("\n");
+            }
             return sb;
         }
 
@@ -201,15 +255,24 @@ namespace Fluent.Net.Test
             // { 'key', func }
 
             // Pour obtenir la trad: tr['key'](params)
+
+            sb.Append("let tr = {");
+            foreach (var item in this.MessagesJs)
+            {
+                sb.Append($"'{item.Key}' : {GetFunctionName(item.Key)},\n");
+            }
+            sb.Append("};");
+
             return sb;
         } 
 
         // Iplémentation naive qui fonctionne que pour le cas simple:
-        public string ToJsFunction(Ast.Entry entry)
+        [Obsolete("On drop ça pour l'autre façon de faire")]
+        public static string ToJsFunction(Ast.Entry entry)
         {
             var message = entry as Ast.Message;
             if (message == null) return null;
-            var jsFunction = new StringBuilder($"function trad_{message.Id.Name}");
+            var jsFunction = new StringBuilder($"function {GetFunctionName(message.Id.Name)}");
             if (message.Value is Ast.Pattern pattern)
             {
                 if (pattern.Elements.Count == 1)
@@ -217,20 +280,34 @@ namespace Fluent.Net.Test
                     if (pattern.Elements[0] is Ast.TextElement textElement)
                     {
                          // Le cas ez
-                        jsFunction.Append($"() : string {{ return '{textElement.Value}'; }}");
+                        jsFunction.Append($"() {{ return '{textElement.Value}'; }}");
                     }
-                   
                 }
             }
 
             return jsFunction.ToString();
         }
 
-        public string ToJsFunction(string id, RuntimeAst.Message message) // impl à l'arache, faut tester et corriger
+        public string ToJsFunction(string id, RuntimeAst.Message message)
         {
              if (message == null) return null;
-            var jsFunction = new StringBuilder($"function trad_{id}");
-            if (message.Value is RuntimeAst.Pattern pattern)
+            var jsFunction = new StringBuilder($"function {GetFunctionName(id)}");
+
+            if (message.Value is RuntimeAst.StringLiteral stringLiteral)
+            {
+                // ça va être facile ça!
+                // HttpUtility.JavaScriptStringEncode
+               
+                jsFunction.Append($"() {{ return '{ HttpUtility.JavaScriptStringEncode(stringLiteral.Value)}'; }}");
+            }
+            else
+            {
+                // Cas non implémenté! Il faut implémenter le support de ce type de message complexe!
+                // Contacter Geoffrey si vous breakez ici.
+                Debugger.Break();
+                return FallBackJsFunction(id);
+            }
+            /* if (message.Value is RuntimeAst.Pattern pattern)
             {
                 if (pattern.Elements.Count == 1)
                 {
@@ -241,9 +318,20 @@ namespace Fluent.Net.Test
                     }
                    
                 }
-            }
+            }*/
 
             return jsFunction.ToString();
+        }
+
+        private static string GetFunctionName(string id)
+        {
+            return $"trad_{id.Replace('-', '_')}";
+        }
+
+        // When the RuntimeAst.Message was too complex, and its js equivalent is not implemented, we fallback to a simple function that returns the key
+        private string FallBackJsFunction(string id)
+        {
+            return $"function {GetFunctionName(id)}() {{ return '{id}'; }}";
         }
     }
 }
