@@ -201,21 +201,6 @@ namespace Fluent.Net.Test
             }
         }
 
-        /* On drop ça, on load le ftl direct.
-        public void LoadEntrys(Ast.Entry[] entries)
-        {
-            foreach (var entry in entries)
-            {
-                LoadEntry(entry);
-            }
-            this.IsDirty = false;
-        }
-        public void LoadEntry(Ast.Entry entry)
-        {
-            // Si c'est une reference (-key = value), il faut stocker dans le dico de References
-            // Si c'est une trad (key = value), il faut stocker dans le dico des Translations
-        }*/
-
         public string GetResult()
         {
             // Prendre les ref pour déclarer les variables
@@ -288,40 +273,59 @@ namespace Fluent.Net.Test
             return jsFunction.ToString();
         }
 
+
+
+        // Premiere approche spaguethi qui fonctionne pour les chaines simples, et les chaines avec variable, mais pas le reste:
+     
         public string ToJsFunction(string id, RuntimeAst.Message message)
         {
-             if (message == null) return null;
-            var jsFunction = new StringBuilder($"function {GetFunctionName(id)}");
+            if (message == null) return null;
+            var jsFunction = new StringBuilder($"function {GetFunctionName(id)}(parameters)");
 
-            if (message.Value is RuntimeAst.StringLiteral stringLiteral)
+            if (message.Value is RuntimeAst.StringLiteral stringLiteral) // La Node est une simple string
             {
-                // ça va être facile ça!
-                // HttpUtility.JavaScriptStringEncode
-               
-                jsFunction.Append($"() {{ return '{ HttpUtility.JavaScriptStringEncode(stringLiteral.Value)}'; }}");
+                jsFunction.Append($"{{ return '{ HttpUtility.JavaScriptStringEncode(stringLiteral.Value)}'; }}");
+            }
+            else if (message.Value is RuntimeAst.Pattern pattern) // La node est un pattern
+            {
+                jsFunction.Append("{ return ");
+                foreach (var element in pattern.Elements)
+                {
+                    if (element is RuntimeAst.StringLiteral sl)
+                    {
+                        jsFunction.Append($"'{HttpUtility.JavaScriptStringEncode(sl.Value)}' +");
+                    }
+
+                    if (element is RuntimeAst.VariableReference variableReference)
+                    {
+                        jsFunction.Append($"parameters['{variableReference.Name}'] +");
+                    }
+
+                    if (element is RuntimeAst.SelectExpression selectExpression) // ça devient trop compliqué, faut faire une pile et on push les items
+                    {
+                        // jsFunction.Append($"{selectExpression.Expression.Name")
+                        if (selectExpression.Expression is RuntimeAst.VariableReference variableRef)
+                        {
+                            jsFunction.Append($"parameters['{variableRef.Name}']");
+                        }
+
+                        foreach (var variant in selectExpression.Variants)
+                        {
+                            jsFunction.Append($"== {variant.Key} ? '{variant.Value}'"); // variant.Value est une node, ça peut être une simple string, ça va souvent être un pattern (qui va mentionner la variableRef)
+                        }
+                    }
+                }
+                jsFunction.Append("''; }");
             }
             else
             {
                 // Cas non implémenté! Il faut implémenter le support de ce type de message complexe!
-                // Contacter Geoffrey si vous breakez ici.
                 Debugger.Break();
                 return FallBackJsFunction(id);
             }
-            /* if (message.Value is RuntimeAst.Pattern pattern)
-            {
-                if (pattern.Elements.Count == 1)
-                {
-                    if (pattern.Elements.First() is RuntimeAst.Message textElement)
-                    {
-                         // Le cas ez
-                        jsFunction.Append($"() : string {{ return '{textElement.Value}'; }}");
-                    }
-                   
-                }
-            }*/
-
             return jsFunction.ToString();
         }
+      
 
         private static string GetFunctionName(string id)
         {
@@ -333,5 +337,133 @@ namespace Fluent.Net.Test
         {
             return $"function {GetFunctionName(id)}() {{ return '{id}'; }}";
         }
+    }
+
+
+    public class MessageReader
+    {
+        public MessageReader(string id, RuntimeAst.Message message, JavaScriptFluentSerializer serializer) // Dans le future, JavaScriptFluentSerializer ==> Interface + DI
+        {
+            Id = id;
+            Message = message;
+            Serializer = serializer;
+        }
+
+        /// <summary>The key. ex:'foo' for an entry 'foo = Foo'</summary>
+        public string Id { get; }
+
+        /// <summary>The reresentation of the message translated. ex: 'Foo' for an entry 'foo = Foo'</summary>
+        public RuntimeAst.Message Message { get; }
+        public JavaScriptFluentSerializer Serializer { get; }
+
+        private Stack<SerializableElement> Stack {get; } = new Stack<SerializableElement>();
+
+        public string ToJsFunction()
+        {
+            ReadMessage(this.Id, this.Message); // Visite le message et remplis la stack
+            return ReadAllStack(); // Pop la stack un par un et génére le JS
+        }
+
+        private void ReadNode(string id, RuntimeAst.Node node)
+        {
+            if (node is RuntimeAst.Message message)
+            {
+                ReadMessage(id, message);
+            }
+        }
+
+        private void ReadMessage(string id, RuntimeAst.Message message)
+        {
+            // On lit les message.Attributes?
+            if (message.Value is RuntimeAst.StringLiteral stringLiteral){
+                this.Stack.Push(new SerializableElement(){ Id = id, Values = new string[] { stringLiteral.Value } });
+                return;
+            }
+            else if (message.Value is RuntimeAst.Pattern pattern)
+            {
+                ReadPattern(id, pattern);
+            }
+            else
+            {
+                Debugger.Break();
+            }
+
+
+            /*
+            if (message == null) return null;
+            var jsFunction = new StringBuilder($"function {GetFunctionName(id)}(parameters)");
+
+            if (message.Value is RuntimeAst.StringLiteral stringLiteral) // La Node est une simple string
+            {
+                jsFunction.Append($"{{ return '{ HttpUtility.JavaScriptStringEncode(stringLiteral.Value)}'; }}");
+            }
+            else if (message.Value is RuntimeAst.Pattern pattern) // La node est un pattern
+            {
+                jsFunction.Append("{ return ");
+                foreach (var element in pattern.Elements)
+                {
+                    if (element is RuntimeAst.StringLiteral sl)
+                    {
+                        jsFunction.Append($"'{HttpUtility.JavaScriptStringEncode(sl.Value)}' +");
+                    }
+
+                    if (element is RuntimeAst.VariableReference variableReference)
+                    {
+                        jsFunction.Append($"parameters['{variableReference.Name}'] +");
+                    }
+
+                    if (element is RuntimeAst.SelectExpression selectExpression) // ça devient trop compliqué, faut faire une pile et on push les items
+                    {
+                        // jsFunction.Append($"{selectExpression.Expression.Name")
+                        if (selectExpression.Expression is RuntimeAst.VariableReference variableRef)
+                        {
+                            jsFunction.Append($"parameters['{variableRef.Name}']");
+                        }
+
+                        foreach (var variant in selectExpression.Variants)
+                        {
+                            jsFunction.Append($"== {variant.Key} ? '{variant.Value}'"); // variant.Value est une node, ça peut être une simple string, ça va souvent être un pattern (qui va mentionner la variableRef)
+                        }
+                    }
+                }
+                jsFunction.Append("''; }");
+            }
+            else
+            {
+                // Cas non implémenté! Il faut implémenter le support de ce type de message complexe!
+                Debugger.Break();
+                return FallBackJsFunction(id);
+            }
+            return jsFunction.ToString();
+            */
+        }
+
+        private void ReadPattern(string id, RuntimeAst.Pattern pattern)
+        {
+            throw new NotImplementedException();
+        }
+
+        private string ReadAllStack()
+        {
+            return string.Empty;
+        }
+
+    }
+
+    public class JavaScriptFluentSerializer : IFluentSerializer
+    {
+
+    }
+
+    public class SerializableElement
+    {
+        public string Id {get; set;}
+        public string[] Values {get; set; }
+        public string[] Variables {get; set; }
+    }
+
+    public interface IFluentSerializer // TODO: Définir les fonctions public sur Serializer, afin de pouvoir switcher avec une implémentation Java, ou autre!
+    {
+
     }
 }

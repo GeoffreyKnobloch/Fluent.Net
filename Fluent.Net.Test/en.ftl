@@ -1,13 +1,14 @@
 ﻿## Closing tabs
 
 tabs-close-button = Close
+tabs-close-warning =
+    You are about to close {$tabCount} tabs.
+    Are you sure you want to continue?
 tabs-close-tooltip = {$tabCount ->
     [one] Close {$tabCount} tab
    *[other] Close {$tabCount} tabs
 }
-tabs-close-warning =
-    You are about to close {$tabCount} tabs.
-    Are you sure you want to continue?
+
 
 ## Syncing
 
