@@ -197,7 +197,7 @@ namespace Fluent.Net.Test
 
             foreach (var message in this.MessagesMessage)
             {
-                this.MessagesJs.Add(message.Key, ToJsFunction(message.Key, message.Value));
+                this.MessagesJs.Add(message.Key, Serialize(message.Key, message.Value));
             }
         }
 
@@ -277,7 +277,7 @@ namespace Fluent.Net.Test
 
         // Premiere approche spaguethi qui fonctionne pour les chaines simples, et les chaines avec variable, mais pas le reste:
      
-        public string ToJsFunction(string id, RuntimeAst.Message message)
+        public string Serialize(string id, RuntimeAst.Message message)
         {
             if (message == null) return null;
             var jsFunction = new StringBuilder($"function {GetFunctionName(id)}(parameters)");
